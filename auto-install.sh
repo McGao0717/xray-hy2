@@ -21,7 +21,12 @@ fi
 
 echo "[1/5] 安装基础组件..."
 apt update -y
-apt install -y git curl bash openssl uuid-runtime ca-certificates docker.io
+apt install -y git curl bash openssl uuid-runtime ca-certificates
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker 未安装，开始安装 docker.io..."
+  apt install -y docker.io
+fi
 
 systemctl enable docker >/dev/null 2>&1 || true
 systemctl restart docker >/dev/null 2>&1 || true
