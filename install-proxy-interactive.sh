@@ -29,7 +29,11 @@ install_base() {
   echo "============================================================"
 
   if ! command -v apt >/dev/null 2>&1; then
+<<<<<<< HEAD
     echo "ERROR: 当前脚本主要支持 Debian / Ubuntu / Oracle Ubuntu 系统"
+=======
+    echo "ERROR: 当前脚本主要支持 Debian / Ubuntu"
+>>>>>>> 8674d55 (Add auto and manual Reality key mode)
     exit 1
   fi
 
@@ -65,6 +69,7 @@ get_public_ip() {
   SERVER_IP="$(ask_default '确认服务器公网 IP' "${SERVER_IP}")"
 }
 
+<<<<<<< HEAD
 generate_reality_key() {
   echo "拉取 Xray 镜像用于生成 Reality Key..."
   docker pull "${XRAY_IMAGE}"
@@ -118,6 +123,61 @@ manual_reality_key() {
   if [ -z "${REALITY_PUBLIC_KEY}" ]; then
     echo "ERROR: Reality PublicKey 不能为空"
     exit 1
+=======
+manual_reality_key() {
+  read -rp "请输入 Reality PrivateKey，必填: " REALITY_PRIVATE_KEY
+  if [ -z "${REALITY_PRIVATE_KEY}" ]; then
+    echo "ERROR: Reality PrivateKey 不能为空"
+    exit 1
+  fi
+
+  read -rp "请输入 Reality PublicKey，必填: " REALITY_PUBLIC_KEY
+  if [ -z "${REALITY_PUBLIC_KEY}" ]; then
+    echo "ERROR: Reality PublicKey 不能为空"
+    exit 1
+  fi
+}
+
+generate_reality_key() {
+  echo "拉取 Xray 镜像用于生成 Reality Key..."
+  docker pull "${XRAY_IMAGE}"
+
+  KEY_OUTPUT=""
+  REALITY_PRIVATE_KEY=""
+  REALITY_PUBLIC_KEY=""
+
+  try_keygen() {
+    local cmd="$1"
+    echo "尝试生成 Reality Key: ${cmd}"
+    KEY_OUTPUT="$(eval "${cmd}" 2>&1 || true)"
+    REALITY_PRIVATE_KEY="$(echo "${KEY_OUTPUT}" | awk -F': ' '/Private key/ {print $2}' | tr -d '\r' | head -n 1)"
+    REALITY_PUBLIC_KEY="$(echo "${KEY_OUTPUT}" | awk -F': ' '/Public key/ {print $2}' | tr -d '\r' | head -n 1)"
+  }
+
+  try_keygen "docker run --rm ${XRAY_IMAGE} x25519"
+
+  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
+    try_keygen "docker run --rm --entrypoint /usr/local/bin/xray ${XRAY_IMAGE} x25519"
+  fi
+
+  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
+    try_keygen "docker run --rm --entrypoint /usr/bin/xray ${XRAY_IMAGE} x25519"
+  fi
+
+  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
+    try_keygen "docker run --rm --entrypoint xray ${XRAY_IMAGE} x25519"
+  fi
+
+  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
+    echo "自动生成 Reality Key 失败，切换为手动填写模式"
+    echo "最后一次输出："
+    echo "${KEY_OUTPUT}"
+    manual_reality_key
+  else
+    echo "Reality Key 自动生成成功"
+    echo "PrivateKey: ${REALITY_PRIVATE_KEY}"
+    echo "PublicKey:  ${REALITY_PUBLIC_KEY}"
+>>>>>>> 8674d55 (Add auto and manual Reality key mode)
   fi
 }
 
@@ -410,6 +470,7 @@ main() {
 }
 
 main "$@"
+<<<<<<< HEAD
 EOF
 
 chmod +x install-proxy-interactive.sh
@@ -417,3 +478,5 @@ chmod +x install-proxy-interactive.sh
 git add install-proxy-interactive.sh
 git commit -m "Add selectable key generation mode"
 git push
+=======
+>>>>>>> 8674d55 (Add auto and manual Reality key mode)
