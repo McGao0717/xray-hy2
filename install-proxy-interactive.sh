@@ -29,11 +29,8 @@ install_base() {
   echo "============================================================"
 
   if ! command -v apt >/dev/null 2>&1; then
-<<<<<<< HEAD
     echo "ERROR: 当前脚本主要支持 Debian / Ubuntu / Oracle Ubuntu 系统"
-=======
     echo "ERROR: 当前脚本主要支持 Debian / Ubuntu"
->>>>>>> 8674d55 (Add auto and manual Reality key mode)
     exit 1
   fi
 
@@ -69,7 +66,6 @@ get_public_ip() {
   SERVER_IP="$(ask_default '确认服务器公网 IP' "${SERVER_IP}")"
 }
 
-<<<<<<< HEAD
 generate_reality_key() {
   echo "拉取 Xray 镜像用于生成 Reality Key..."
   docker pull "${XRAY_IMAGE}"
@@ -123,7 +119,6 @@ manual_reality_key() {
   if [ -z "${REALITY_PUBLIC_KEY}" ]; then
     echo "ERROR: Reality PublicKey 不能为空"
     exit 1
-=======
 manual_reality_key() {
   read -rp "请输入 Reality PrivateKey，必填: " REALITY_PRIVATE_KEY
   if [ -z "${REALITY_PRIVATE_KEY}" ]; then
@@ -177,7 +172,6 @@ generate_reality_key() {
     echo "Reality Key 自动生成成功"
     echo "PrivateKey: ${REALITY_PRIVATE_KEY}"
     echo "PublicKey:  ${REALITY_PUBLIC_KEY}"
->>>>>>> 8674d55 (Add auto and manual Reality key mode)
   fi
 }
 
@@ -316,9 +310,7 @@ write_result() {
   HY2_LINK="hy2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${REALITY_SNI}#HY2-UDP"
 
   cat > "${INSTALL_DIR}/result/client-info.txt" <<INFOEOF
-============================================================
 Xray + HY2 Deploy Result
-============================================================
 
 Server IP:
 ${SERVER_IP}
@@ -367,7 +359,6 @@ Cloud firewall must allow:
 ${XRAY_PORT}/tcp
 ${HY2_PORT}/udp
 
-============================================================
 INFOEOF
 
   echo ""
@@ -470,7 +461,6 @@ main() {
 }
 
 main "$@"
-<<<<<<< HEAD
 EOF
 
 chmod +x install-proxy-interactive.sh
@@ -478,5 +468,3 @@ chmod +x install-proxy-interactive.sh
 git add install-proxy-interactive.sh
 git commit -m "Add selectable key generation mode"
 git push
-=======
->>>>>>> 8674d55 (Add auto and manual Reality key mode)
