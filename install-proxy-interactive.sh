@@ -8,7 +8,7 @@ HY2_IMAGE="${HY2_IMAGE:-tobyxdd/hysteria:v2}"
 ask_default() {
   local prompt="$1"
   local default="$2"
-  local value
+  local value=""
   read -rp "${prompt} [${default}]: " value
   echo "${value:-$default}"
 }
@@ -26,8 +26,7 @@ install_base() {
   echo "============================================================"
 
   if ! command -v apt >/dev/null 2>&1; then
-    echo "ERROR: 当前脚本主要支持 Debian / Ubuntu / Oracle Ubuntu 系统"
-    echo "ERROR: 当前脚本主要支持 Debian / Ubuntu"
+    echo "ERROR: 当前脚本只支持 Debian / Ubuntu 系统"
     exit 1
   fi
 
@@ -59,63 +58,9 @@ get_public_ip() {
   if [ -z "${SERVER_IP}" ]; then
     SERVER_IP="YOUR_SERVER_IP"
   fi
-
   SERVER_IP="$(ask_default '确认服务器公网 IP' "${SERVER_IP}")"
 }
 
-generate_reality_key() {
-  echo "拉取 Xray 镜像用于生成 Reality Key..."
-  docker pull "${XRAY_IMAGE}"
-
-  KEY_OUTPUT=""
-  REALITY_PRIVATE_KEY=""
-  REALITY_PUBLIC_KEY=""
-
-  try_keygen() {
-    local cmd="$1"
-    echo "尝试: ${cmd}"
-    KEY_OUTPUT="$(eval "${cmd}" 2>&1 || true)"
-    REALITY_PRIVATE_KEY="$(echo "${KEY_OUTPUT}" | awk -F': ' '/Private key/ {print $2}' | tr -d '\r' | head -n 1)"
-    REALITY_PUBLIC_KEY="$(echo "${KEY_OUTPUT}" | awk -F': ' '/Public key/ {print $2}' | tr -d '\r' | head -n 1)"
-  }
-
-  try_keygen "docker run --rm ${XRAY_IMAGE} x25519"
-
-  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
-    try_keygen "docker run --rm --entrypoint /usr/local/bin/xray ${XRAY_IMAGE} x25519"
-  fi
-
-  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
-    try_keygen "docker run --rm --entrypoint /usr/bin/xray ${XRAY_IMAGE} x25519"
-  fi
-
-  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
-    try_keygen "docker run --rm --entrypoint xray ${XRAY_IMAGE} x25519"
-  fi
-
-  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
-    echo "自动生成 Reality Key 失败，切换到手动填写模式"
-    echo "最后一次输出:"
-    echo "${KEY_OUTPUT}"
-    manual_reality_key
-  else
-    echo "Reality Key 自动生成成功"
-    echo "PrivateKey: ${REALITY_PRIVATE_KEY}"
-    echo "PublicKey:  ${REALITY_PUBLIC_KEY}"
-  fi
-}
-
-manual_reality_key() {
-  read -rp "请输入 Reality PrivateKey，必填: " REALITY_PRIVATE_KEY
-  if [ -z "${REALITY_PRIVATE_KEY}" ]; then
-    echo "ERROR: Reality PrivateKey 不能为空"
-    exit 1
-  fi
-
-  read -rp "请输入 Reality PublicKey，必填: " REALITY_PUBLIC_KEY
-  if [ -z "${REALITY_PUBLIC_KEY}" ]; then
-    echo "ERROR: Reality PublicKey 不能为空"
-    exit 1
 manual_reality_key() {
   read -rp "请输入 Reality PrivateKey，必填: " REALITY_PRIVATE_KEY
   if [ -z "${REALITY_PRIVATE_KEY}" ]; then
@@ -157,10 +102,6 @@ generate_reality_key() {
   fi
 
   if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
-    try_keygen "docker run --rm --entrypoint xray ${XRAY_IMAGE} x25519"
-  fi
-
-  if [ -z "${REALITY_PRIVATE_KEY}" ] || [ -z "${REALITY_PUBLIC_KEY}" ]; then
     echo "自动生成 Reality Key 失败，切换为手动填写模式"
     echo "最后一次输出："
     echo "${KEY_OUTPUT}"
@@ -175,7 +116,7 @@ generate_reality_key() {
 write_xray_config() {
   mkdir -p "${INSTALL_DIR}/xray"
 
-  cat > "${INSTALL_DIR}/xray/config.json" <<XRAYEOF
+  cat > "${INSTALL_DIR}/xray/config.json" <<XRAY_CONFIG_EOF
 {
   "log": {
     "loglevel": "info"
@@ -226,7 +167,7 @@ write_xray_config() {
     }
   ]
 }
-XRAYEOF
+XRAY_CONFIG_EOF
 }
 
 write_hy2_config() {
@@ -240,7 +181,7 @@ write_hy2_config() {
 
   chmod 600 "${INSTALL_DIR}/hysteria/hy2.key"
 
-  cat > "${INSTALL_DIR}/hysteria/config.yaml" <<HY2EOF
+  cat > "${INSTALL_DIR}/hysteria/config.yaml" <<HY2_CONFIG_EOF
 listen: :${HY2_PORT}
 
 tls:
@@ -256,7 +197,7 @@ masquerade:
   proxy:
     url: https://${REALITY_SNI}/
     rewriteHost: true
-HY2EOF
+HY2_CONFIG_EOF
 }
 
 start_containers() {
@@ -306,8 +247,10 @@ write_result() {
   VLESS_LINK="vless://${XRAY_UUID}@${SERVER_IP}:${XRAY_PORT}?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#Xray-Reality-TCP"
   HY2_LINK="hy2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${REALITY_SNI}#HY2-UDP"
 
-  cat > "${INSTALL_DIR}/result/client-info.txt" <<INFOEOF
+  cat > "${INSTALL_DIR}/result/client-info.txt" <<RESULT_EOF
+============================================================
 Xray + HY2 Deploy Result
+============================================================
 
 Server IP:
 ${SERVER_IP}
@@ -356,7 +299,8 @@ Cloud firewall must allow:
 ${XRAY_PORT}/tcp
 ${HY2_PORT}/udp
 
-INFOEOF
+============================================================
+RESULT_EOF
 
   echo ""
   echo "============================================================"
@@ -434,6 +378,7 @@ main() {
 
   read -rp "确认开始部署？输入 y 继续 [y]: " CONFIRM
   CONFIRM="${CONFIRM:-y}"
+
   if [ "${CONFIRM}" != "y" ] && [ "${CONFIRM}" != "Y" ]; then
     echo "已取消"
     exit 0
