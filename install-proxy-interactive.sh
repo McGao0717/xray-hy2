@@ -1,6 +1,3 @@
-cd /root/xray-hy2
-
-cat > install-proxy-interactive.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -465,6 +462,3 @@ EOF
 
 chmod +x install-proxy-interactive.sh
 
-git add install-proxy-interactive.sh
-git commit -m "Add selectable key generation mode"
-git push
