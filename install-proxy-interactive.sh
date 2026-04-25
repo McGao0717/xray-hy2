@@ -458,7 +458,3 @@ main() {
 }
 
 main "$@"
-EOF
-
-chmod +x install-proxy-interactive.sh
-
