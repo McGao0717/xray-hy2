@@ -180,13 +180,13 @@ generate_reality_keys() {
 
   local key_output priv pub
   key_output="$(docker run --rm "${XRAY_IMAGE}" x25519 2>&1 || true)"
-  priv="$(echo "${key_output}" | awk -F': ' 'BEGIN{IGNORECASE=1}/Private key/ {print $2}' | tr -d '\r' | head -n1)"
-  pub="$(echo "${key_output}" | awk -F': ' 'BEGIN{IGNORECASE=1}/Public key/ {print $2}' | tr -d '\r' | head -n1)"
+  priv="$(extract_x25519_value "${key_output}" "private")"
+  pub="$(extract_x25519_value "${key_output}" "public")"
 
   if [ -z "${priv}" ] || [ -z "${pub}" ]; then
     key_output="$(docker run --rm --entrypoint /usr/local/bin/xray "${XRAY_IMAGE}" x25519 2>&1 || true)"
-    priv="$(echo "${key_output}" | awk -F': ' 'BEGIN{IGNORECASE=1}/Private key/ {print $2}' | tr -d '\r' | head -n1)"
-    pub="$(echo "${key_output}" | awk -F': ' 'BEGIN{IGNORECASE=1}/Public key/ {print $2}' | tr -d '\r' | head -n1)"
+    priv="$(extract_x25519_value "${key_output}" "private")"
+    pub="$(extract_x25519_value "${key_output}" "public")"
   fi
 
   if [ -z "${priv}" ] || [ -z "${pub}" ]; then
@@ -197,6 +197,30 @@ generate_reality_keys() {
 
   GENERATED_REALITY_PRIVATE_KEY="${priv}"
   GENERATED_REALITY_PUBLIC_KEY="${pub}"
+}
+
+extract_x25519_value() {
+  local input="$1"
+  local kind="$2"
+
+  echo "${input}" | awk -v kind="${kind}" '
+    BEGIN { IGNORECASE = 1; FS = ":" }
+    {
+      label = $1
+      value = $0
+      sub(/^[^:]*:/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+
+      if (kind == "private" && label ~ /Private[[:space:]]*Key/) {
+        print value
+        exit
+      }
+      if (kind == "public" && label ~ /Public[[:space:]]*Key/) {
+        print value
+        exit
+      }
+    }
+  ' | tr -d '\r' | head -n1
 }
 
 generate_password() {

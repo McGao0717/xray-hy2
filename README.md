@@ -188,6 +188,8 @@ docker rm -f xray-reality hysteria2-server nginx-decoy
 - Added automatic Docker version check and install/update flow.
 - Added generate-first parameter workflow: UUID, Reality keys, short ID, and HY2 password are generated and saved before confirmation.
 - Added choice to use generated values or manually enter existing values.
+- Added short install entrypoint: `i.sh`.
+- Fixed Reality key parsing for newer Xray output such as `PrivateKey` and `Password (PublicKey)`.
 - Simplified `auto-install.sh` so it downloads the repo and delegates all deployment logic to the main installer.
 - Fixed broken Chinese prompts and improved bilingual output.
 - Updated README with Chinese and English usage, features, options, and troubleshooting commands.
@@ -195,6 +197,8 @@ docker rm -f xray-reality hysteria2-server nginx-decoy
 - 新增 Docker 版本检查与自动安装/更新流程。
 - 新增“先自动生成并保存参数，再询问是否使用”的流程。
 - 支持选择自动生成参数，或手动输入已有 UUID、Reality key、Short ID、HY2 密码。
+- 新增短命令入口 `i.sh`。
+- 修复新版 Xray 输出 `PrivateKey` 和 `Password (PublicKey)` 时 Reality 密钥解析失败的问题。
 - 简化 `auto-install.sh`，统一由主安装脚本处理部署逻辑。
 - 修复中文提示乱码，完善中英文输出。
 - 更新 README，补充中英文使用方法、功能介绍、配置选项和常用命令。
