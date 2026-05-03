@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # Xray + Hysteria2 + Nginx Docker Installer
-# Version: 2.1.0
+# Version: 2.2.0
 #
 # Deploys all services as Docker containers:
 #   - Xray VLESS Reality TCP
@@ -16,7 +16,7 @@ set -euo pipefail
 #   - Nginx HTTP:      80/tcp
 # ============================================================
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack}"
 RESULT_DIR="${INSTALL_DIR}/result"
 
@@ -99,7 +99,7 @@ install_base_packages() {
   apt update -y
   DEBIAN_FRONTEND=noninteractive apt install -y \
     ca-certificates curl wget gnupg lsb-release openssl jq uuid-runtime \
-    coreutils grep sed gawk tar gzip unzip iproute2 procps
+    coreutils grep sed gawk tar gzip unzip iproute2 procps qrencode
 }
 
 install_docker_from_official_repo() {
@@ -538,10 +538,212 @@ start_containers() {
   fi
 }
 
+write_clash_config() {
+  cat > "${RESULT_DIR}/clash-merged-optimized.yaml" <<CLASHEOF
+port: 7890
+socks-port: 7891
+mixed-port: 7890
+allow-lan: false
+mode: Rule
+log-level: info
+ipv6: false
+tcp-concurrent: true
+unified-delay: true
+find-process-mode: strict
+global-client-fingerprint: chrome
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+sniffer:
+  enable: true
+  sniff:
+    TLS:
+      ports:
+        - 443
+        - 8443
+    HTTP:
+      ports:
+        - 80
+        - 8080-8880
+      override-destination: true
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - "*.localhost"
+    - "*.localdomain"
+    - "*.home.arpa"
+    - "localhost.ptlogin2.qq.com"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "time.*.com"
+    - "time.*.gov"
+    - "time.*.edu.cn"
+    - "time.*.apple.com"
+    - "ntp.*.com"
+    - "ntp.*.com.cn"
+    - "+.pool.ntp.org"
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+  fallback:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+
+proxies:
+  - name: ${NODE_NAME}-Reality
+    type: vless
+    server: ${SERVER_IP}
+    port: ${XRAY_PORT}
+    uuid: ${XRAY_UUID}
+    flow: xtls-rprx-vision
+    udp: true
+    network: tcp
+    tls: true
+    client-fingerprint: chrome
+    servername: ${REALITY_SNI}
+    reality-opts:
+      public-key: ${REALITY_PUBLIC_KEY}
+      short-id: ${SHORT_ID}
+    skip-cert-verify: true
+
+  - name: ${NODE_NAME}-HY2
+    type: hysteria2
+    server: ${SERVER_IP}
+    port: ${HY2_PORT}
+    password: ${HY2_PASSWORD}
+    sni: ${REALITY_SNI}
+    skip-cert-verify: true
+    fast-open: true
+    udp: true
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - ${NODE_NAME}-HY2
+      - ${NODE_NAME}-Reality
+      - AUTO
+      - DIRECT
+
+  - name: STREAMING
+    type: select
+    proxies:
+      - ${NODE_NAME}-HY2
+      - AUTO
+      - ${NODE_NAME}-Reality
+      - PROXY
+
+  - name: YOUTUBE
+    type: select
+    proxies:
+      - ${NODE_NAME}-HY2
+      - STREAMING
+      - AUTO
+      - ${NODE_NAME}-Reality
+
+  - name: AUTO
+    type: url-test
+    proxies:
+      - ${NODE_NAME}-HY2
+      - ${NODE_NAME}-Reality
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+
+rules:
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,224.0.0.0/4,DIRECT,no-resolve
+  - GEOSITE,private,DIRECT
+  - GEOIP,private,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,google.com,PROXY
+  - DOMAIN-SUFFIX,googleapis.com,PROXY
+  - DOMAIN-SUFFIX,gstatic.com,PROXY
+  - DOMAIN-SUFFIX,googleusercontent.com,PROXY
+  - DOMAIN-SUFFIX,google.com.hk,PROXY
+  - DOMAIN-SUFFIX,google.com.tw,PROXY
+  - DOMAIN-SUFFIX,google.co.jp,PROXY
+  - DOMAIN-SUFFIX,google.co.uk,PROXY
+  - DOMAIN-SUFFIX,google-analytics.com,PROXY
+  - DOMAIN-SUFFIX,googletagmanager.com,PROXY
+  - DOMAIN-SUFFIX,googlesyndication.com,PROXY
+  - DOMAIN-SUFFIX,googleadservices.com,PROXY
+  - DOMAIN-SUFFIX,ggpht.com,PROXY
+  - DOMAIN-KEYWORD,google,PROXY
+  - GEOSITE,youtube,YOUTUBE
+  - DOMAIN-SUFFIX,googlevideo.com,YOUTUBE
+  - DOMAIN-SUFFIX,ytimg.com,YOUTUBE
+  - DOMAIN-SUFFIX,youtube.com,YOUTUBE
+  - DOMAIN-SUFFIX,youtu.be,YOUTUBE
+  - DOMAIN-SUFFIX,ggpht.com,YOUTUBE
+  - GEOSITE,netflix,STREAMING
+  - GEOSITE,disney,STREAMING
+  - GEOSITE,hbo,STREAMING
+  - GEOSITE,primevideo,STREAMING
+  - GEOSITE,spotify,STREAMING
+  - GEOSITE,tiktok,STREAMING
+  - DOMAIN-SUFFIX,netflix.com,STREAMING
+  - DOMAIN-SUFFIX,nflxvideo.net,STREAMING
+  - DOMAIN-SUFFIX,disneyplus.com,STREAMING
+  - DOMAIN-SUFFIX,disney-plus.net,STREAMING
+  - DOMAIN-SUFFIX,hbomax.com,STREAMING
+  - DOMAIN-SUFFIX,max.com,STREAMING
+  - DOMAIN-SUFFIX,primevideo.com,STREAMING
+  - DOMAIN-SUFFIX,spotify.com,STREAMING
+  - DOMAIN-SUFFIX,tiktok.com,STREAMING
+  - DOMAIN-SUFFIX,tiktokcdn.com,STREAMING
+  - GEOSITE,category-ads-all,REJECT
+  - GEOSITE,apple-cn,DIRECT
+  - GEOSITE,microsoft@cn,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
+  - GEOSITE,geolocation-!cn,PROXY
+  - MATCH,PROXY
+CLASHEOF
+  chmod 600 "${RESULT_DIR}/clash-merged-optimized.yaml"
+}
+
+print_qr_code() {
+  local title="$1"
+  local value="$2"
+
+  echo ""
+  echo "------------------------------------------------------------"
+  echo "${title}"
+  echo "------------------------------------------------------------"
+  if command -v qrencode >/dev/null 2>&1; then
+    qrencode -t ANSIUTF8 "${value}" || true
+  else
+    warn "qrencode is not installed; QR code skipped."
+  fi
+  echo "${value}"
+}
+
 write_result() {
   local vless_link hy2_link
   vless_link="vless://${XRAY_UUID}@${SERVER_IP}:${XRAY_PORT}?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#${NODE_NAME}-Xray-Reality-TCP"
   hy2_link="hy2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${REALITY_SNI}#${NODE_NAME}-HY2-UDP"
+  write_clash_config
 
   cat > "${RESULT_DIR}/client-info.txt" <<INFOEOF
 ============================================================
@@ -601,6 +803,7 @@ Install directory: ${INSTALL_DIR}
 Generated values: ${RESULT_DIR}/generated-params.txt
 Final server env: ${RESULT_DIR}/server-env.sh
 Client info: ${RESULT_DIR}/client-info.txt
+Clash/Mihomo YAML: ${RESULT_DIR}/clash-merged-optimized.yaml
 
 ------------------------------------------------------------
 Docker Commands
@@ -628,6 +831,8 @@ INFOEOF
   echo "Deployment completed / 部署完成"
   echo "============================================================"
   cat "${RESULT_DIR}/client-info.txt"
+  print_qr_code "VLESS Reality QR Code" "${vless_link}"
+  print_qr_code "Hysteria2 QR Code" "${hy2_link}"
 }
 
 post_check() {

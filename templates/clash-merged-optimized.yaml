@@ -1,0 +1,179 @@
+port: 7890
+socks-port: 7891
+mixed-port: 7890
+allow-lan: false
+mode: Rule
+log-level: info
+ipv6: false
+tcp-concurrent: true
+unified-delay: true
+find-process-mode: strict
+global-client-fingerprint: chrome
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+sniffer:
+  enable: true
+  sniff:
+    TLS:
+      ports:
+        - 443
+        - 8443
+    HTTP:
+      ports:
+        - 80
+        - 8080-8880
+      override-destination: true
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - "*.localhost"
+    - "*.localdomain"
+    - "*.home.arpa"
+    - "localhost.ptlogin2.qq.com"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "time.*.com"
+    - "time.*.gov"
+    - "time.*.edu.cn"
+    - "time.*.apple.com"
+    - "ntp.*.com"
+    - "ntp.*.com.cn"
+    - "+.pool.ntp.org"
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+  fallback:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+
+proxies:
+  - name: __NODE_NAME__-Reality
+    type: vless
+    server: __SERVER_IP__
+    port: __XRAY_PORT__
+    uuid: __XRAY_UUID__
+    flow: xtls-rprx-vision
+    udp: true
+    network: tcp
+    tls: true
+    client-fingerprint: chrome
+    servername: __REALITY_SNI__
+    reality-opts:
+      public-key: __REALITY_PUBLIC_KEY__
+      short-id: __SHORT_ID__
+    skip-cert-verify: true
+
+  - name: __NODE_NAME__-HY2
+    type: hysteria2
+    server: __SERVER_IP__
+    port: __HY2_PORT__
+    password: __HY2_PASSWORD__
+    sni: __REALITY_SNI__
+    skip-cert-verify: true
+    fast-open: true
+    udp: true
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - __NODE_NAME__-HY2
+      - __NODE_NAME__-Reality
+      - AUTO
+      - DIRECT
+
+  - name: STREAMING
+    type: select
+    proxies:
+      - __NODE_NAME__-HY2
+      - AUTO
+      - __NODE_NAME__-Reality
+      - PROXY
+
+  - name: YOUTUBE
+    type: select
+    proxies:
+      - __NODE_NAME__-HY2
+      - STREAMING
+      - AUTO
+      - __NODE_NAME__-Reality
+
+  - name: AUTO
+    type: url-test
+    proxies:
+      - __NODE_NAME__-HY2
+      - __NODE_NAME__-Reality
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+
+rules:
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,224.0.0.0/4,DIRECT,no-resolve
+  - GEOSITE,private,DIRECT
+  - GEOIP,private,DIRECT,no-resolve
+  - DOMAIN-SUFFIX,google.com,PROXY
+  - DOMAIN-SUFFIX,googleapis.com,PROXY
+  - DOMAIN-SUFFIX,gstatic.com,PROXY
+  - DOMAIN-SUFFIX,googleusercontent.com,PROXY
+  - DOMAIN-SUFFIX,google.com.hk,PROXY
+  - DOMAIN-SUFFIX,google.com.tw,PROXY
+  - DOMAIN-SUFFIX,google.co.jp,PROXY
+  - DOMAIN-SUFFIX,google.co.uk,PROXY
+  - DOMAIN-SUFFIX,google-analytics.com,PROXY
+  - DOMAIN-SUFFIX,googletagmanager.com,PROXY
+  - DOMAIN-SUFFIX,googlesyndication.com,PROXY
+  - DOMAIN-SUFFIX,googleadservices.com,PROXY
+  - DOMAIN-SUFFIX,ggpht.com,PROXY
+  - DOMAIN-KEYWORD,google,PROXY
+  - GEOSITE,youtube,YOUTUBE
+  - DOMAIN-SUFFIX,googlevideo.com,YOUTUBE
+  - DOMAIN-SUFFIX,ytimg.com,YOUTUBE
+  - DOMAIN-SUFFIX,youtube.com,YOUTUBE
+  - DOMAIN-SUFFIX,youtu.be,YOUTUBE
+  - DOMAIN-SUFFIX,ggpht.com,YOUTUBE
+  - GEOSITE,netflix,STREAMING
+  - GEOSITE,disney,STREAMING
+  - GEOSITE,hbo,STREAMING
+  - GEOSITE,primevideo,STREAMING
+  - GEOSITE,spotify,STREAMING
+  - GEOSITE,tiktok,STREAMING
+  - DOMAIN-SUFFIX,netflix.com,STREAMING
+  - DOMAIN-SUFFIX,nflxvideo.net,STREAMING
+  - DOMAIN-SUFFIX,disneyplus.com,STREAMING
+  - DOMAIN-SUFFIX,disney-plus.net,STREAMING
+  - DOMAIN-SUFFIX,hbomax.com,STREAMING
+  - DOMAIN-SUFFIX,max.com,STREAMING
+  - DOMAIN-SUFFIX,primevideo.com,STREAMING
+  - DOMAIN-SUFFIX,spotify.com,STREAMING
+  - DOMAIN-SUFFIX,tiktok.com,STREAMING
+  - DOMAIN-SUFFIX,tiktokcdn.com,STREAMING
+  - GEOSITE,category-ads-all,REJECT
+  - GEOSITE,apple-cn,DIRECT
+  - GEOSITE,microsoft@cn,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
+  - GEOSITE,geolocation-!cn,PROXY
+  - MATCH,PROXY

@@ -12,6 +12,8 @@ One-click Docker deployment for Xray VLESS Reality TCP, Hysteria2 UDP, and an Ng
 - Saves generated values first, then asks whether to use them or enter existing values.
 - Supports non-interactive deployment with environment variables.
 - Outputs ready-to-import VLESS and HY2 client links.
+- Shows VLESS Reality and Hysteria2 QR codes after installation.
+- Generates an optimized Clash/Mihomo YAML profile for China direct and overseas proxy routing.
 - Uses Docker host network mode by default.
 
 - Xray、Hysteria2、Nginx 全部运行在 Docker 容器内。
@@ -162,6 +164,7 @@ After installation:
 - Generated values: `/opt/proxy-stack/result/generated-params.txt`
 - Final environment values: `/opt/proxy-stack/result/server-env.sh`
 - Client links and connection details: `/opt/proxy-stack/result/client-info.txt`
+- Clash/Mihomo optimized YAML: `/opt/proxy-stack/result/clash-merged-optimized.yaml`
 - Xray config: `/opt/proxy-stack/xray/config.json`
 - Hysteria2 config: `/opt/proxy-stack/hysteria/config.yaml`
 - Nginx config: `/opt/proxy-stack/nginx/conf.d/default.conf`
@@ -181,7 +184,36 @@ docker restart xray-reality hysteria2-server nginx-decoy
 docker rm -f xray-reality hysteria2-server nginx-decoy
 ```
 
+## Client Import / 客户端导入
+
+After installation, the terminal prints two QR codes:
+
+- VLESS Reality QR code
+- Hysteria2 QR code
+
+The same links are saved in:
+
+```bash
+/opt/proxy-stack/result/client-info.txt
+```
+
+The installer also generates an optimized Clash/Mihomo profile:
+
+```bash
+/opt/proxy-stack/result/clash-merged-optimized.yaml
+```
+
+This profile routes China/private traffic directly and sends Google, YouTube, Netflix, Disney, TikTok, Spotify, and other overseas traffic through the proxy.
+
 ## Version Notes / 版本更新说明
+
+### v2.2.0
+
+- Added repository Clash/Mihomo template: `templates/clash-merged-optimized.yaml`.
+- Installer now generates `/opt/proxy-stack/result/clash-merged-optimized.yaml` with the actual deployment values.
+- Installer now prints VLESS Reality and Hysteria2 QR codes after deployment.
+- Added `qrencode` to base packages.
+- README updated with client import and YAML output details.
 
 ### v2.1.0
 
