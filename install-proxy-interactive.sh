@@ -3,28 +3,23 @@ set -euo pipefail
 
 # ============================================================
 # Xray + Hysteria2 + Nginx Docker Installer
-# Version: 2.0.0
+# Version: 2.1.0
 #
-# Deploys:
+# Deploys all services as Docker containers:
 #   - Xray VLESS Reality TCP
 #   - Hysteria2 UDP
 #   - Nginx decoy/status website
-#   - Docker host network mode
 #
 # Default ports:
 #   - Xray Reality TCP: 1443/tcp
 #   - Hysteria2 UDP:   1443/udp
 #   - Nginx HTTP:      80/tcp
-#
-# Modes:
-#   - Interactive: generate values first, then ask whether to use them
-#   - Bring-your-own: input existing UUID / Reality keys / short ID / HY2 password
-#   - Non-interactive: AUTO_ACCEPT_GENERATED=1 SKIP_CONFIRM=1 bash install-proxy-interactive.sh
 # ============================================================
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack}"
 RESULT_DIR="${INSTALL_DIR}/result"
+
 XRAY_IMAGE="${XRAY_IMAGE:-ghcr.io/xtls/xray-core:latest}"
 HY2_IMAGE="${HY2_IMAGE:-tobyxdd/hysteria:v2}"
 NGINX_IMAGE="${NGINX_IMAGE:-nginx:alpine}"
@@ -34,8 +29,9 @@ HY2_PORT="${HY2_PORT:-1443}"
 NGINX_PORT="${NGINX_PORT:-80}"
 REALITY_SNI="${REALITY_SNI:-www.cloudflare.com}"
 REALITY_DEST="${REALITY_DEST:-www.cloudflare.com:443}"
-NODE_NAME="${NODE_NAME:-GCP-Xray-HY2}"
+NODE_NAME="${NODE_NAME:-Xray-HY2-Docker}"
 MIN_DOCKER_VERSION="${MIN_DOCKER_VERSION:-20.10.0}"
+
 AUTO_ACCEPT_GENERATED="${AUTO_ACCEPT_GENERATED:-0}"
 SKIP_CONFIRM="${SKIP_CONFIRM:-0}"
 INSTALL_NGINX="${INSTALL_NGINX:-1}"
@@ -47,6 +43,12 @@ SHORT_ID="${SHORT_ID:-}"
 HY2_PASSWORD="${HY2_PASSWORD:-}"
 SERVER_IP="${SERVER_IP:-}"
 
+GENERATED_XRAY_UUID=""
+GENERATED_REALITY_PRIVATE_KEY=""
+GENERATED_REALITY_PUBLIC_KEY=""
+GENERATED_SHORT_ID=""
+GENERATED_HY2_PASSWORD=""
+
 log() { echo -e "\033[1;32m[INFO]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[WARN]\033[0m $*"; }
 err() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
@@ -55,9 +57,11 @@ confirm() {
   local prompt="$1"
   local default="${2:-Y}"
   local ans
+
   if [ "${SKIP_CONFIRM}" = "1" ]; then
     return 0
   fi
+
   if [ "${default}" = "Y" ]; then
     read -rp "${prompt} [Y/n]: " ans || true
     ans="${ans:-Y}"
@@ -65,6 +69,7 @@ confirm() {
     read -rp "${prompt} [y/N]: " ans || true
     ans="${ans:-N}"
   fi
+
   case "${ans}" in
     y|Y|yes|YES) return 0 ;;
     *) return 1 ;;
@@ -80,7 +85,7 @@ need_root() {
 
 need_apt() {
   if ! command -v apt >/dev/null 2>&1; then
-    err "This installer only supports Debian / Ubuntu with apt."
+    err "This installer currently supports Debian / Ubuntu only. / 当前脚本仅支持 Debian / Ubuntu。"
     exit 1
   fi
 }
@@ -90,78 +95,87 @@ version_ge() {
 }
 
 install_base_packages() {
-  log "Installing base packages..."
+  log "Installing base packages... / 安装基础组件..."
   apt update -y
   DEBIAN_FRONTEND=noninteractive apt install -y \
     ca-certificates curl wget gnupg lsb-release openssl jq uuid-runtime \
     coreutils grep sed gawk tar gzip unzip iproute2 procps
 }
 
+install_docker_from_official_repo() {
+  local os_id codename arch
+
+  . /etc/os-release
+  os_id="${ID:-}"
+  codename="${VERSION_CODENAME:-}"
+  arch="$(dpkg --print-architecture)"
+
+  if [ -n "${codename}" ] && [[ "${os_id}" =~ ^(debian|ubuntu)$ ]]; then
+    install -m 0755 -d /etc/apt/keyrings
+    rm -f /etc/apt/keyrings/docker.gpg
+    curl -fsSL "https://download.docker.com/linux/${os_id}/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${os_id} ${codename} stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt update -y
+    DEBIAN_FRONTEND=noninteractive apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  else
+    warn "Unsupported apt OS metadata for Docker official repo. Falling back to docker.io."
+    DEBIAN_FRONTEND=noninteractive apt install -y docker.io
+  fi
+}
+
 install_or_update_docker() {
   local current_version=""
+
   if command -v docker >/dev/null 2>&1; then
     current_version="$(docker version --format '{{.Server.Version}}' 2>/dev/null || docker --version | awk '{print $3}' | tr -d ',')"
   fi
 
   if [ -n "${current_version}" ] && version_ge "${current_version}" "${MIN_DOCKER_VERSION}"; then
-    log "Docker version ${current_version} is OK."
+    log "Docker ${current_version} is installed and meets the minimum ${MIN_DOCKER_VERSION}."
   else
     if [ -z "${current_version}" ]; then
-      warn "Docker is not installed. Installing Docker..."
+      warn "Docker is not installed. Installing Docker... / 未检测到 Docker，开始安装..."
     else
-      warn "Docker version ${current_version} is older than ${MIN_DOCKER_VERSION}. Updating Docker..."
+      warn "Docker ${current_version} is older than ${MIN_DOCKER_VERSION}. Updating Docker... / Docker 版本过旧，开始更新..."
     fi
 
-    install_base_packages
-
-    local os_id codename arch
-    . /etc/os-release
-    os_id="${ID}"
-    codename="${VERSION_CODENAME:-}"
-    arch="$(dpkg --print-architecture)"
-
-    if [ -n "${codename}" ] && [[ "${os_id}" =~ ^(debian|ubuntu)$ ]]; then
-      install -m 0755 -d /etc/apt/keyrings
-      curl -fsSL "https://download.docker.com/linux/${os_id}/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      chmod a+r /etc/apt/keyrings/docker.gpg
-      echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${os_id} ${codename} stable" \
-        > /etc/apt/sources.list.d/docker.list
-      apt update -y
-      DEBIAN_FRONTEND=noninteractive apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || \
-        DEBIAN_FRONTEND=noninteractive apt install -y docker.io
-    else
+    install_docker_from_official_repo || {
+      warn "Official Docker installation failed. Falling back to docker.io."
       DEBIAN_FRONTEND=noninteractive apt install -y docker.io
-    fi
+    }
   fi
 
   systemctl enable docker >/dev/null 2>&1 || true
   systemctl restart docker >/dev/null 2>&1 || true
 
   if ! docker ps >/dev/null 2>&1; then
-    err "Docker is not running."
+    err "Docker is installed but not running. / Docker 已安装但未正常运行。"
     systemctl status docker --no-pager -l || true
     exit 1
   fi
 
-  log "Docker is running: $(docker --version)"
+  log "Docker is ready: $(docker --version)"
 }
 
 get_server_ip() {
   if [ -n "${SERVER_IP}" ]; then
     return 0
   fi
+
   SERVER_IP="$(curl -4 -s --max-time 8 https://api.ipify.org || true)"
   if [ -z "${SERVER_IP}" ]; then
     SERVER_IP="$(curl -4 -s --max-time 8 https://ifconfig.me || true)"
   fi
   if [ -z "${SERVER_IP}" ]; then
     SERVER_IP="YOUR_SERVER_IP"
-    warn "Could not detect public IPv4. Replace YOUR_SERVER_IP in result manually."
+    warn "Could not detect public IPv4. Replace YOUR_SERVER_IP in the result manually."
   fi
 }
 
 generate_reality_keys() {
-  log "Pulling Xray image for Reality key generation..."
+  log "Pulling Xray image to generate Reality keys... / 拉取 Xray 镜像生成 Reality 密钥..."
   docker pull "${XRAY_IMAGE}"
 
   local key_output priv pub
@@ -185,10 +199,19 @@ generate_reality_keys() {
   GENERATED_REALITY_PUBLIC_KEY="${pub}"
 }
 
+generate_password() {
+  local password
+  password="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 24 || true)"
+  if [ -z "${password}" ]; then
+    password="$(openssl rand -hex 16)"
+  fi
+  echo "${password}"
+}
+
 prepare_generated_values() {
   GENERATED_XRAY_UUID="$(cat /proc/sys/kernel/random/uuid)"
   GENERATED_SHORT_ID="$(openssl rand -hex 8)"
-  GENERATED_HY2_PASSWORD="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 24)"
+  GENERATED_HY2_PASSWORD="$(generate_password)"
   generate_reality_keys
 
   mkdir -p "${RESULT_DIR}"
@@ -217,13 +240,8 @@ read_or_generate_params() {
   echo "Saved to:            ${RESULT_DIR}/generated-params.txt"
   echo ""
 
-  local have_all_existing=0
   if [ -n "${XRAY_UUID}" ] && [ -n "${REALITY_PRIVATE_KEY}" ] && [ -n "${REALITY_PUBLIC_KEY}" ] && [ -n "${SHORT_ID}" ] && [ -n "${HY2_PASSWORD}" ]; then
-    have_all_existing=1
-  fi
-
-  if [ "${have_all_existing}" = "1" ]; then
-    log "Using values from environment variables."
+    log "Using values from environment variables. / 使用环境变量中已有的参数。"
     return 0
   fi
 
@@ -233,11 +251,11 @@ read_or_generate_params() {
     REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${GENERATED_REALITY_PUBLIC_KEY}}"
     SHORT_ID="${SHORT_ID:-${GENERATED_SHORT_ID}}"
     HY2_PASSWORD="${HY2_PASSWORD:-${GENERATED_HY2_PASSWORD}}"
-    log "AUTO_ACCEPT_GENERATED=1, using generated values."
+    log "AUTO_ACCEPT_GENERATED=1, using generated values. / 自动使用生成参数。"
     return 0
   fi
 
-  if confirm "Use generated values? / 是否直接使用以上自动生成参数？" "Y"; then
+  if confirm "Use generated values? / 是否使用以上自动生成的参数？" "Y"; then
     XRAY_UUID="${XRAY_UUID:-${GENERATED_XRAY_UUID}}"
     REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-${GENERATED_REALITY_PRIVATE_KEY}}"
     REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${GENERATED_REALITY_PUBLIC_KEY}}"
@@ -245,14 +263,15 @@ read_or_generate_params() {
     HY2_PASSWORD="${HY2_PASSWORD:-${GENERATED_HY2_PASSWORD}}"
   else
     echo ""
-    echo "Enter existing values. Press Enter to keep generated default where allowed."
+    echo "Enter existing values. Press Enter to keep the generated default."
+    echo "请输入已有参数；直接回车则使用刚刚自动生成的默认值。"
     read -rp "Xray UUID [${GENERATED_XRAY_UUID}]: " XRAY_UUID
     XRAY_UUID="${XRAY_UUID:-${GENERATED_XRAY_UUID}}"
 
-    read -rp "Reality Private Key [generated hidden, Enter to use generated]: " REALITY_PRIVATE_KEY
+    read -rp "Reality Private Key [Enter to use generated]: " REALITY_PRIVATE_KEY
     REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-${GENERATED_REALITY_PRIVATE_KEY}}"
 
-    read -rp "Reality Public Key [generated hidden, Enter to use generated]: " REALITY_PUBLIC_KEY
+    read -rp "Reality Public Key [Enter to use generated]: " REALITY_PUBLIC_KEY
     REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-${GENERATED_REALITY_PUBLIC_KEY}}"
 
     read -rp "Short ID [${GENERATED_SHORT_ID}]: " SHORT_ID
@@ -265,12 +284,15 @@ read_or_generate_params() {
 
 validate_params() {
   local missing=0
+  local name
+
   for name in XRAY_UUID REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY SHORT_ID HY2_PASSWORD; do
     if [ -z "${!name:-}" ]; then
       err "Missing required value: ${name}"
       missing=1
     fi
   done
+
   if [ "${missing}" = "1" ]; then
     exit 1
   fi
@@ -298,17 +320,29 @@ confirm_summary() {
   echo "Cloud firewall / security group must allow:"
   echo "  - ${XRAY_PORT}/tcp"
   echo "  - ${HY2_PORT}/udp"
-  echo "  - ${NGINX_PORT}/tcp if Nginx is enabled"
+  if [ "${INSTALL_NGINX}" = "1" ]; then
+    echo "  - ${NGINX_PORT}/tcp"
+  fi
   echo ""
 
   if ! confirm "Continue deployment? / 确认继续部署？" "Y"; then
-    warn "Cancelled by user."
+    warn "Cancelled by user. / 已取消。"
     exit 0
   fi
 }
 
+write_hy2_certificate() {
+  openssl ecparam -genkey -name prime256v1 -out "${INSTALL_DIR}/hysteria/hy2.key"
+  openssl req -new -x509 \
+    -key "${INSTALL_DIR}/hysteria/hy2.key" \
+    -out "${INSTALL_DIR}/hysteria/hy2.crt" \
+    -subj "/CN=${REALITY_SNI}" \
+    -days 3650 >/dev/null 2>&1
+  chmod 600 "${INSTALL_DIR}/hysteria/hy2.key"
+}
+
 write_configs() {
-  log "Writing configuration files..."
+  log "Writing configuration files... / 写入配置文件..."
   mkdir -p "${INSTALL_DIR}/xray" "${INSTALL_DIR}/hysteria" "${INSTALL_DIR}/nginx/html" "${INSTALL_DIR}/nginx/conf.d" "${RESULT_DIR}"
 
   cat > "${INSTALL_DIR}/xray/config.json" <<XRAYEOF
@@ -360,12 +394,7 @@ write_configs() {
 }
 XRAYEOF
 
-  openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-    -keyout "${INSTALL_DIR}/hysteria/hy2.key" \
-    -out "${INSTALL_DIR}/hysteria/hy2.crt" \
-    -subj "/CN=${REALITY_SNI}" \
-    -days 3650 >/dev/null 2>&1
-  chmod 600 "${INSTALL_DIR}/hysteria/hy2.key"
+  write_hy2_certificate
 
   cat > "${INSTALL_DIR}/hysteria/config.yaml" <<HY2EOF
 listen: :${HY2_PORT}
@@ -393,16 +422,16 @@ HY2EOF
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${NODE_NAME}</title>
   <style>
-    body{margin:0;background:#0b0f0d;color:#dbe7dc;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh}
-    main{max-width:760px;padding:48px;border:1px solid rgba(255,255,255,.12);border-radius:24px;background:rgba(255,255,255,.04)}
-    h1{font-size:32px;margin:0 0 12px}p{line-height:1.7;color:#aab7ad}.tag{color:#a4c7a4;letter-spacing:.18em;text-transform:uppercase;font-size:12px}
+    body{margin:0;background:#101312;color:#e7ece8;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh}
+    main{max-width:720px;padding:40px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.045)}
+    h1{font-size:30px;margin:0 0 12px}p{line-height:1.7;color:#b8c1bb}.tag{color:#9fd19f;letter-spacing:.16em;text-transform:uppercase;font-size:12px}
   </style>
 </head>
 <body>
   <main>
     <div class="tag">Service Online</div>
     <h1>${NODE_NAME}</h1>
-    <p>This server is running a containerized edge service stack.</p>
+    <p>This server is running a containerized Xray, Hysteria2, and Nginx service stack.</p>
   </main>
 </body>
 </html>
@@ -438,22 +467,22 @@ export REALITY_PRIVATE_KEY='${REALITY_PRIVATE_KEY}'
 export REALITY_PUBLIC_KEY='${REALITY_PUBLIC_KEY}'
 export SHORT_ID='${SHORT_ID}'
 export HY2_PASSWORD='${HY2_PASSWORD}'
-EOF
+ENVEOF
   chmod 600 "${RESULT_DIR}/server-env.sh"
 }
 
 start_containers() {
-  log "Pulling Docker images..."
+  log "Pulling Docker images... / 拉取 Docker 镜像..."
   docker pull "${XRAY_IMAGE}"
   docker pull "${HY2_IMAGE}"
   if [ "${INSTALL_NGINX}" = "1" ]; then
     docker pull "${NGINX_IMAGE}"
   fi
 
-  log "Removing old containers if any..."
+  log "Removing old containers if present... / 清理旧容器..."
   docker rm -f xray-reality hysteria2-server nginx-decoy >/dev/null 2>&1 || true
 
-  log "Starting Xray Reality container..."
+  log "Starting Xray Reality container... / 启动 Xray Reality 容器..."
   docker run -d \
     --name xray-reality \
     --restart always \
@@ -461,7 +490,7 @@ start_containers() {
     -v "${INSTALL_DIR}/xray/config.json:/etc/xray/config.json:ro" \
     "${XRAY_IMAGE}" run -config /etc/xray/config.json
 
-  log "Starting Hysteria2 container..."
+  log "Starting Hysteria2 container... / 启动 Hysteria2 容器..."
   docker run -d \
     --name hysteria2-server \
     --restart always \
@@ -472,7 +501,7 @@ start_containers() {
     "${HY2_IMAGE}" server -c /etc/hysteria/config.yaml
 
   if [ "${INSTALL_NGINX}" = "1" ]; then
-    log "Starting Nginx container..."
+    log "Starting Nginx container... / 启动 Nginx 容器..."
     docker run -d \
       --name nginx-decoy \
       --restart always \
@@ -502,7 +531,7 @@ ${SERVER_IP}
 Required cloud firewall / security group:
 - ${XRAY_PORT}/tcp for Xray Reality
 - ${HY2_PORT}/udp for Hysteria2
-- ${NGINX_PORT}/tcp for Nginx HTTP health/decoy page
+$(if [ "${INSTALL_NGINX}" = "1" ]; then echo "- ${NGINX_PORT}/tcp for Nginx HTTP health/decoy page"; fi)
 
 ------------------------------------------------------------
 Xray VLESS Reality TCP
@@ -590,9 +619,11 @@ post_check() {
 main() {
   need_root
   need_apt
+
   echo "============================================================"
   echo "Xray + Hysteria2 + Nginx Docker Installer v${VERSION}"
   echo "============================================================"
+
   install_base_packages
   install_or_update_docker
   get_server_ip
