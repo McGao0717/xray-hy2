@@ -13,6 +13,8 @@ One-click Docker deployment for Xray VLESS Reality TCP, Hysteria2 UDP, and an Ng
 - Supports non-interactive deployment with environment variables.
 - Outputs ready-to-import VLESS and HY2 client links.
 - Shows VLESS Reality and Hysteria2 QR codes after installation.
+- Saves scan-ready VLESS and Hysteria2 QR codes as PNG files.
+- Validates the public IPv4 address and checks TCP/UDP port conflicts before deployment.
 - Generates an optimized Clash/Mihomo YAML profile for China direct and overseas proxy routing.
 - Uses Docker host network mode by default.
 
@@ -22,6 +24,8 @@ One-click Docker deployment for Xray VLESS Reality TCP, Hysteria2 UDP, and an Ng
 - 先保存自动生成的参数，再询问是否使用，或手动输入已有参数。
 - 支持通过环境变量进行无人值守部署。
 - 自动输出可导入客户端的 VLESS 和 HY2 链接。
+- 自动保存可直接扫描的 VLESS 与 Hysteria2 PNG 二维码。
+- 部署前校验公网 IPv4，并检查 TCP/UDP 端口冲突。
 - 默认使用 Docker host 网络模式。
 
 ## Requirements / 系统要求
@@ -165,6 +169,10 @@ After installation:
 - Final environment values: `/opt/proxy-stack/result/server-env.sh`
 - Client links and connection details: `/opt/proxy-stack/result/client-info.txt`
 - Clash/Mihomo optimized YAML: `/opt/proxy-stack/result/clash-merged-optimized.yaml`
+- VLESS QR PNG: `/opt/proxy-stack/result/vless-qrcode.png`
+- Hysteria2 QR PNG: `/opt/proxy-stack/result/hysteria2-qrcode.png`
+- VLESS link: `/opt/proxy-stack/result/vless-link.txt`
+- Hysteria2 link: `/opt/proxy-stack/result/hysteria2-link.txt`
 - Xray config: `/opt/proxy-stack/xray/config.json`
 - Hysteria2 config: `/opt/proxy-stack/hysteria/config.yaml`
 - Nginx config: `/opt/proxy-stack/nginx/conf.d/default.conf`
@@ -206,6 +214,20 @@ The installer also generates an optimized Clash/Mihomo profile:
 This profile routes China/private traffic directly and sends Google, YouTube, Netflix, Disney, TikTok, Spotify, and other overseas traffic through the proxy.
 
 ## Version Notes / 版本更新说明
+
+### v2.3.0
+
+- Added strict public IPv4 validation with three detection endpoints and manual fallback.
+- Added TCP/UDP port conflict checks before replacing containers.
+- Added URL-encoded node names for reliable Chinese and flag emoji imports.
+- Added scan-ready PNG QR codes and separate client link files.
+- Preserved Clash/Mihomo generation and bilingual interactive deployment.
+
+- 新增公网 IPv4 严格校验、多源检测和手动输入回退。
+- 新增部署前 TCP/UDP 端口冲突检查。
+- 节点名称使用 URL 编码，支持中文及国旗 Emoji 正确导入。
+- 新增可直接扫描的 PNG 二维码和独立节点链接文件。
+- 保留 Clash/Mihomo 配置生成及双语交互安装。
 
 ### v2.2.0
 

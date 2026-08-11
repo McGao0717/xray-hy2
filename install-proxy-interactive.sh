@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ============================================================
 # Xray + Hysteria2 + Nginx Docker Installer
-# Version: 2.2.0
+# Version: 2.3.0
 #
 # Deploys all services as Docker containers:
 #   - Xray VLESS Reality TCP
@@ -16,7 +16,7 @@ set -euo pipefail
 #   - Nginx HTTP:      80/tcp
 # ============================================================
 
-VERSION="2.2.0"
+VERSION="2.3.0"
 INSTALL_DIR="${INSTALL_DIR:-/opt/proxy-stack}"
 RESULT_DIR="${INSTALL_DIR}/result"
 
@@ -94,6 +94,16 @@ version_ge() {
   [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
 }
 
+validate_ip() {
+  local ip="$1"
+  local octet
+  [[ "${ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r -a octets <<< "${ip}"
+  for octet in "${octets[@]}"; do
+    (( octet >= 0 && octet <= 255 )) || return 1
+  done
+}
+
 install_base_packages() {
   log "Installing base packages... / 安装基础组件..."
   apt update -y
@@ -160,17 +170,45 @@ install_or_update_docker() {
 }
 
 get_server_ip() {
-  if [ -n "${SERVER_IP}" ]; then
+  local endpoint detected
+
+  if [ -n "${SERVER_IP}" ] && validate_ip "${SERVER_IP}"; then
     return 0
   fi
 
-  SERVER_IP="$(curl -4 -s --max-time 8 https://api.ipify.org || true)"
-  if [ -z "${SERVER_IP}" ]; then
-    SERVER_IP="$(curl -4 -s --max-time 8 https://ifconfig.me || true)"
+  for endpoint in https://api.ipify.org https://ifconfig.me https://ipv4.icanhazip.com; do
+    detected="$(curl -4 -s --max-time 8 "${endpoint}" | tr -d '[:space:]' || true)"
+    if validate_ip "${detected}"; then
+      SERVER_IP="${detected}"
+      log "Detected public IPv4: ${SERVER_IP}"
+      return 0
+    fi
+  done
+
+  warn "Could not detect public IPv4. / 无法自动检测公网 IPv4。"
+  while ! validate_ip "${SERVER_IP}"; do
+    read -rp "Public IPv4 / 公网 IPv4: " SERVER_IP
+  done
+}
+
+is_port_used() {
+  local port="$1" proto="$2"
+  if [ "${proto}" = "tcp" ]; then
+    ss -lntH 2>/dev/null | awk -v port=":${port}" '$4 ~ port { found=1 } END { exit !found }'
+  else
+    ss -lunH 2>/dev/null | awk -v port=":${port}" '$4 ~ port { found=1 } END { exit !found }'
   fi
-  if [ -z "${SERVER_IP}" ]; then
-    SERVER_IP="YOUR_SERVER_IP"
-    warn "Could not detect public IPv4. Replace YOUR_SERVER_IP in the result manually."
+}
+
+check_port_conflicts() {
+  local conflict=0
+  is_port_used "${XRAY_PORT}" tcp && { warn "TCP ${XRAY_PORT} is already in use."; conflict=1; }
+  is_port_used "${HY2_PORT}" udp && { warn "UDP ${HY2_PORT} is already in use."; conflict=1; }
+  if [ "${INSTALL_NGINX}" = "1" ]; then
+    is_port_used "${NGINX_PORT}" tcp && { warn "TCP ${NGINX_PORT} is already in use."; conflict=1; }
+  fi
+  if [ "${conflict}" = "1" ] && ! confirm "Continue despite port conflicts? / 端口冲突，仍然继续？" "N"; then
+    exit 1
   fi
 }
 
@@ -310,14 +348,15 @@ validate_params() {
   local missing=0
   local name
 
-  for name in XRAY_UUID REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY SHORT_ID HY2_PASSWORD; do
+  for name in XRAY_UUID REALITY_PRIVATE_KEY REALITY_PUBLIC_KEY SHORT_ID HY2_PASSWORD SERVER_IP; do
     if [ -z "${!name:-}" ]; then
       err "Missing required value: ${name}"
       missing=1
     fi
   done
 
-  if [ "${missing}" = "1" ]; then
+  if [ "${missing}" = "1" ] || ! validate_ip "${SERVER_IP}"; then
+    err "Invalid or missing deployment parameters."
     exit 1
   fi
 }
@@ -726,6 +765,9 @@ CLASHEOF
 print_qr_code() {
   local title="$1"
   local value="$2"
+  local base="$3"
+  local png_path="${RESULT_DIR}/${base}-qrcode.png"
+  local txt_path="${RESULT_DIR}/${base}-link.txt"
 
   echo ""
   echo "------------------------------------------------------------"
@@ -733,16 +775,26 @@ print_qr_code() {
   echo "------------------------------------------------------------"
   if command -v qrencode >/dev/null 2>&1; then
     qrencode -t ANSIUTF8 "${value}" || true
+    qrencode -t PNG -s 8 -o "${png_path}" "${value}"
+    echo "PNG: ${png_path}"
   else
     warn "qrencode is not installed; QR code skipped."
   fi
+  printf '%s\n' "${value}" > "${txt_path}"
   echo "${value}"
+  echo "Link file: ${txt_path}"
+}
+
+urlencode_name() {
+  printf '%s' "$1" | jq -sRr @uri
 }
 
 write_result() {
-  local vless_link hy2_link
-  vless_link="vless://${XRAY_UUID}@${SERVER_IP}:${XRAY_PORT}?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#${NODE_NAME}-Xray-Reality-TCP"
-  hy2_link="hy2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${REALITY_SNI}#${NODE_NAME}-HY2-UDP"
+  local vless_link hy2_link vless_name hy2_name
+  vless_name="$(urlencode_name "${NODE_NAME}-Xray-Reality-TCP")"
+  hy2_name="$(urlencode_name "${NODE_NAME}-HY2-UDP")"
+  vless_link="vless://${XRAY_UUID}@${SERVER_IP}:${XRAY_PORT}?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_SNI}&sid=${SHORT_ID}&flow=xtls-rprx-vision#${vless_name}"
+  hy2_link="hy2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${REALITY_SNI}#${hy2_name}"
   write_clash_config
 
   cat > "${RESULT_DIR}/client-info.txt" <<INFOEOF
@@ -804,6 +856,8 @@ Generated values: ${RESULT_DIR}/generated-params.txt
 Final server env: ${RESULT_DIR}/server-env.sh
 Client info: ${RESULT_DIR}/client-info.txt
 Clash/Mihomo YAML: ${RESULT_DIR}/clash-merged-optimized.yaml
+VLESS QR PNG: ${RESULT_DIR}/vless-qrcode.png
+Hysteria2 QR PNG: ${RESULT_DIR}/hysteria2-qrcode.png
 
 ------------------------------------------------------------
 Docker Commands
@@ -831,8 +885,8 @@ INFOEOF
   echo "Deployment completed / 部署完成"
   echo "============================================================"
   cat "${RESULT_DIR}/client-info.txt"
-  print_qr_code "VLESS Reality QR Code" "${vless_link}"
-  print_qr_code "Hysteria2 QR Code" "${hy2_link}"
+  print_qr_code "VLESS Reality QR Code" "${vless_link}" "vless"
+  print_qr_code "Hysteria2 QR Code" "${hy2_link}" "hysteria2"
 }
 
 post_check() {
@@ -859,6 +913,7 @@ main() {
   read_or_generate_params
   validate_params
   confirm_summary
+  check_port_conflicts
   write_configs
   start_containers
   write_result
